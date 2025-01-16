@@ -171,7 +171,7 @@ Mongo.Collection.prototype.attachSchema = function c2AttachSchema(ss, options) {
     };
   }
 
-function getArgumentsAndValidationContext(methodName, args, async) {
+async function getArgumentsAndValidationContext(methodName, args, async) {
     let options = isInsertType(methodName) ? args[1] : args[2];
    
     // Support missing options arg
@@ -186,8 +186,8 @@ function getArgumentsAndValidationContext(methodName, args, async) {
           // https://github.com/aldeed/meteor-collection2/issues/175
          userId = Meteor.userId();
        } catch (err) {}
-   
-       [args, validationContext] = doValidate(
+
+       [args, validationContext] = await doValidate(
          this,
          methodName,
          args,
@@ -216,9 +216,9 @@ function getArgumentsAndValidationContext(methodName, args, async) {
        : Mongo.Collection.prototype[methodName.replace('Async', '')];
    
     if (!_super) return;
-    Mongo.Collection.prototype[methodName] = function (...args) {
-       [args, validationContext] = getArgumentsAndValidationContext.call(this, methodName, args, async);
-   
+    Mongo.Collection.prototype[methodName] = async function (...args) {
+       [args, validationContext] = await getArgumentsAndValidationContext.call(this, methodName, args, async);
+
        if (async && !Meteor.isFibersDisabled) {
          try {
            this[methodName.replace('Async', '')].isCalledFromAsync = true;
@@ -247,8 +247,8 @@ function getArgumentsAndValidationContext(methodName, args, async) {
    function _methodMutationAsync(methodName) {
     const _super = Mongo.Collection.prototype[methodName];
     Mongo.Collection.prototype[methodName] = async function (...args) {
-       [args, validationContext] = getArgumentsAndValidationContext.call(this, methodName, args, true);
-    
+       [args, validationContext] = await getArgumentsAndValidationContext.call(this, methodName, args, true);
+
        try {
          return await _super.apply(this, args);
        } catch (err) {
@@ -281,8 +281,8 @@ function getArgumentsAndValidationContext(methodName, args, async) {
   /*
    * Private
    */
-  
-  function doValidate(collection, type, args, getAutoValues, userId, isFromTrustedCode, async) {
+
+  async function doValidate(collection, type, args, getAutoValues, userId, isFromTrustedCode, async) {
     let doc, callback, error, options, selector;
   
     if (!args.length) {
@@ -429,7 +429,7 @@ function getArgumentsAndValidationContext(methodName, args, async) {
 
     // Preliminary cleaning on both client and server. On the server and for local
     // collections, automatic values will also be set at this point.
-    schema.clean(doc, {
+    await schema.clean(doc, {
       mutate: true, // Clean the doc/modifier in place
       isModifier: !isInsertType(type),
       // The extent with the schema-level defaults (from SimpleSchema constructor options)
@@ -451,7 +451,7 @@ function getArgumentsAndValidationContext(methodName, args, async) {
         docToValidate[prop] = doc[prop];
       }
     }
-  
+
     // On the server, upserts are possible; SimpleSchema handles upserts pretty
     // well by default, but it will not know about the fields in the selector,
     // which are also stored in the database if an insert is performed. So we
@@ -472,7 +472,7 @@ function getArgumentsAndValidationContext(methodName, args, async) {
     // we will add them to docToValidate for validation purposes only.
     // This is because we want all actual values generated on the server.
     if (Meteor.isClient && !isLocalCollection) {
-      schema.clean(docToValidate, {
+        await schema.clean(docToValidate, {
         autoConvert: false,
         extendAutoValueContext,
         filter: false,
@@ -702,9 +702,9 @@ function getArgumentsAndValidationContext(methodName, args, async) {
       // and auto-values. This must be done with "transform: null" or we would be
       // extending a clone of doc and therefore have no effect.
       const firstDeny = {
-        insert: function (userId, doc) {
+        insert: async function (userId, doc) {
           // Referenced doc is cleaned in place
-          c.simpleSchema(doc).clean(doc, {
+            await  c.simpleSchema(doc).clean(doc, {
             mutate: true,
             isModifier: false,
             // We don't do these here because they are done on the client if desired
@@ -725,9 +725,9 @@ function getArgumentsAndValidationContext(methodName, args, async) {
   
           return false;
         },
-        update: function (userId, doc, fields, modifier) {
+        update: async function (userId, doc, fields, modifier) {
           // Referenced modifier is cleaned in place
-          c.simpleSchema(modifier).clean(modifier, {
+            await c.simpleSchema(modifier).clean(modifier, {
             mutate: true,
             isModifier: true,
             // We don't do these here because they are done on the client if desired
@@ -768,9 +768,9 @@ function getArgumentsAndValidationContext(methodName, args, async) {
       // we need to pass the doc through any transforms to be sure
       // that custom types are properly recognized for type validation.
       const secondDeny = {
-        insert: function (userId, doc) {
+        insert: async function (userId, doc) {
           // We pass the false options because we will have done them on the client if desired
-          doValidate(
+          await doValidate(
             c,
             'insert',
             [
@@ -794,11 +794,11 @@ function getArgumentsAndValidationContext(methodName, args, async) {
   
           return false;
         },
-        update: function (userId, doc, fields, modifier) {
+        update: async function (userId, doc, fields, modifier) {
           // NOTE: This will never be an upsert because client-side upserts
           // are not allowed once you define allow/deny functions.
           // We pass the false options because we will have done them on the client if desired
-          doValidate(
+          await doValidate(
             c,
             'update',
             [
